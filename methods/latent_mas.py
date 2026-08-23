@@ -84,6 +84,27 @@ class LatentMASMethod:
                 trimmed_layers.append(layer)
         return tuple(trimmed_layers)
 
+    @staticmethod
+    def _cache_nbytes(past_kv) -> int:
+        """Logical size in bytes of tensors contained in a KV cache."""
+        if past_kv is None:
+            return 0
+
+        if Cache is not None and isinstance(past_kv, Cache):
+            past_kv = past_kv.to_legacy_cache()
+
+        total = 0
+
+        for layer in past_kv:
+            if isinstance(layer, (tuple, list)):
+                for tensor in layer:
+                    if torch.is_tensor(tensor):
+                        total += tensor.numel() * tensor.element_size()
+            elif torch.is_tensor(layer):
+                total += layer.numel() * layer.element_size()
+
+        return int(total)
+
     @torch.no_grad()
     def run_batch(self, items: List[Dict]) -> List[Dict]:
         if len(items) > self.generate_bs:
@@ -93,6 +114,11 @@ class LatentMASMethod:
         past_kv: Optional[Tuple] = None
         agent_traces: List[List[Dict]] = [[] for _ in range(batch_size)]
         final_texts = ["" for _ in range(batch_size)]
+
+        # Exact efficiency instrumentation.
+        kv_positions_handoff = 0
+        logical_kv_payload_bytes = 0
+        peak_kv_positions = 0
 
         for agent in self.agents:
 
@@ -144,6 +170,15 @@ class LatentMASMethod:
                     tokens_added = new_past_len - prev_past_len
                     tokens_to_keep = self.latent_steps if self.latent_only else tokens_added
                     past_kv = self._truncate_past(past_kv, tokens_to_keep)
+
+                # Measure the state actually handed to the next agent.
+                handoff_positions = _past_length(past_kv)
+                kv_positions_handoff += handoff_positions
+                logical_kv_payload_bytes += self._cache_nbytes(past_kv)
+                peak_kv_positions = max(
+                    peak_kv_positions,
+                    handoff_positions,
+                )
 
                 for idx in range(batch_size):
                     mask = wrapped_mask[idx].bool()
@@ -207,6 +242,15 @@ class LatentMASMethod:
         results: List[Dict] = []
         for idx, item in enumerate(items):
             final_text = final_texts[idx]
+
+            # Generated textual output tokens. Latent intermediate agents do
+            # not emit text, so this counts the visible final generation.
+            output_tokens = len(
+                self.model.tokenizer.encode(
+                    final_text,
+                    add_special_tokens=False,
+                )
+            )
             if self.task in ['mbppplus', 'humanevalplus']:
                 pred = extract_markdown_python_block(final_text)
                 gold = item.get("gold", "")
@@ -250,6 +294,10 @@ class LatentMASMethod:
                     "raw_prediction": final_text,
                     "agents": agent_traces[idx],
                     "correct": ok,
+                    "output_tokens": output_tokens,
+                    "kv_positions_handoff": kv_positions_handoff,
+                    "peak_kv_positions": peak_kv_positions,
+                    "logical_kv_payload_bytes": logical_kv_payload_bytes,
                 }
             )
         return results

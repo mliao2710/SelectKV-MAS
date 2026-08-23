@@ -22,6 +22,7 @@ from methods.text_mas import TextMASMethod
 from models import ModelWrapper
 from utils import auto_device, set_seed
 import time
+import torch
 
 
 def evaluate(preds: List[Dict]) -> Tuple[float, int]:
@@ -147,6 +148,9 @@ def main():
     device = auto_device(args.device)
     model = ModelWrapper(args.model_name, device, use_vllm=args.use_vllm, args=args)
     
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
     start_time = time.time()
 
     common_kwargs = dict(
@@ -257,7 +261,50 @@ def main():
     total_time = time.time() - start_time
 
     acc, correct = evaluate(preds)
-    
+
+    # ---------------------------------------------------------
+    # Aggregate efficiency metrics across evaluated problems.
+    # Paper experiments use generate_bs=1 so cache metrics are
+    # attributed exactly to individual problems.
+    # ---------------------------------------------------------
+    n_samples = len(preds)
+
+    output_tokens_total = sum(
+        int(p.get("output_tokens", 0))
+        for p in preds
+    )
+
+    kv_positions_handoff_total = sum(
+        int(p.get("kv_positions_handoff", 0))
+        for p in preds
+    )
+
+    logical_kv_payload_bytes_total = sum(
+        int(p.get("logical_kv_payload_bytes", 0))
+        for p in preds
+    )
+
+    peak_kv_positions = max(
+        (
+            int(p.get("peak_kv_positions", 0))
+            for p in preds
+        ),
+        default=0,
+    )
+
+    if torch.cuda.is_available():
+        peak_gpu_memory_mb = (
+            torch.cuda.max_memory_allocated()
+            / (1024 ** 2)
+        )
+    else:
+        peak_gpu_memory_mb = 0.0
+
+    logical_kv_payload_mb_total = (
+        logical_kv_payload_bytes_total
+        / (1024 ** 2)
+    )
+
     # Load results in JSON format
     print(
         json.dumps(
@@ -267,10 +314,41 @@ def main():
                 "split": args.split,
                 "seed": args.seed,
                 "max_samples": args.max_samples,
+                "generate_bs": args.generate_bs,
+                "temperature": args.temperature,
+                "latent_steps": args.latent_steps,
+
                 "accuracy": acc,
                 "correct": correct,
-                "total_time_sec": round(total_time,4),
-                "time_per_sample_sec": round(total_time / args.max_samples, 4),
+
+                "output_tokens_total": output_tokens_total,
+                "output_tokens_per_sample": round(
+                    output_tokens_total / n_samples, 4
+                ) if n_samples else 0.0,
+
+                "kv_positions_handoff_total":
+                    kv_positions_handoff_total,
+                "kv_positions_handoff_per_sample": round(
+                    kv_positions_handoff_total / n_samples, 4
+                ) if n_samples else 0.0,
+
+                "peak_kv_positions": peak_kv_positions,
+
+                "logical_kv_payload_mb_total": round(
+                    logical_kv_payload_mb_total, 4
+                ),
+                "logical_kv_payload_mb_per_sample": round(
+                    logical_kv_payload_mb_total / n_samples, 4
+                ) if n_samples else 0.0,
+
+                "peak_gpu_memory_mb": round(
+                    peak_gpu_memory_mb, 4
+                ),
+
+                "total_time_sec": round(total_time, 4),
+                "time_per_sample_sec": round(
+                    total_time / n_samples, 4
+                ) if n_samples else 0.0,
             },
             ensure_ascii=False,
         )
