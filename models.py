@@ -228,15 +228,8 @@ class ModelWrapper:
         if attention_mask is None:
             attention_mask = torch.ones_like(input_ids, device=self.device)
         prompt_lengths = attention_mask.sum(dim=1).tolist()
-        cache_position = None
         if past_key_values is not None:
             past_len = _past_length(past_key_values)
-            cache_position = torch.arange(
-                past_len,
-                past_len + input_ids.shape[-1],
-                dtype=torch.long,
-                device=self.device,
-            )
             if past_len > 0:
                 past_mask = torch.ones(
                     (attention_mask.shape[0], past_len),
@@ -248,14 +241,13 @@ class ModelWrapper:
             input_ids=input_ids,
             attention_mask=attention_mask,
             max_new_tokens=max_new_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            do_sample=True,
+            temperature=temperature if temperature > 0 else None,
+            top_p=top_p if temperature > 0 else None,
+            do_sample=temperature > 0,
             pad_token_id=self.tokenizer.pad_token_id,
             return_dict_in_generate=True,
             output_scores=False,
             past_key_values=past_key_values,
-            cache_position=cache_position,
         )
         sequences = outputs.sequences
         generations: List[str] = []
