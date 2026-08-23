@@ -105,6 +105,36 @@ class LatentMASMethod:
 
         return int(total)
 
+    @staticmethod
+    def _extract_multiple_choice_answer(text: str):
+        """
+        Extract a final A/B/C/D answer from multiple-choice model output.
+        Returns lowercase a/b/c/d or None.
+        """
+        import re
+
+        if not text:
+            return None
+
+        patterns = [
+            r'\\boxed\\{\\s*([A-Da-d])\\s*\\}',
+            r'(?:final answer|answer|correct option|correct answer)\\s*(?:is|:)?\\s*\\(?([A-Da-d])\\)?',
+            r'\\boption\\s+([A-Da-d])\\b',
+            r'\\(([A-Da-d])\\)\\s*$',
+            r'\\b([A-Da-d])\\s*$',
+        ]
+
+        for pattern in patterns:
+            matches = re.findall(
+                pattern,
+                text,
+                flags=re.IGNORECASE | re.MULTILINE,
+            )
+            if matches:
+                return matches[-1].lower()
+
+        return None
+
     @torch.no_grad()
     def run_batch(self, items: List[Dict]) -> List[Dict]:
         if len(items) > self.generate_bs:
@@ -278,6 +308,12 @@ class LatentMASMethod:
                 except ValueError:
                     ok = False
                     error_msg = f'Value error in parsing answer. Pred: {pred}, Gold: {gold}'
+
+            elif self.task in ["medqa", "arc_easy", "arc_challenge"]:
+                pred = self._extract_multiple_choice_answer(final_text)
+                gold = str(item.get("gold", "")).strip().lower()
+                ok = (pred == gold) if (pred and gold) else False
+                error_msg = None
 
             else:
                 pred = normalize_answer(extract_gsm8k_answer(final_text))
