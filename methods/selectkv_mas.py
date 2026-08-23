@@ -512,6 +512,16 @@ class SelectKVMASMethod:
                     tokens_to_keep = self.latent_steps if self.latent_only else tokens_added
                     past_kv = self._truncate_past(past_kv, tokens_to_keep)
 
+                # Measure the SelectKV-compressed state actually handed
+                # to the next agent.
+                handoff_positions = _past_length(past_kv)
+                kv_positions_handoff += handoff_positions
+                logical_kv_payload_bytes += self._cache_nbytes(past_kv)
+                peak_kv_positions = max(
+                    peak_kv_positions,
+                    handoff_positions,
+                )
+
                 for idx in range(batch_size):
                     mask = wrapped_mask[idx].bool()
                     trimmed_ids = wrapped_ids[idx][mask].to("cpu").tolist()
