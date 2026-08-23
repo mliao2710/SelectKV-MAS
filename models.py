@@ -256,16 +256,32 @@ class ModelWrapper:
         if attention_mask is None:
             attention_mask = torch.ones_like(input_ids, device=self.device)
         prompt_lengths = attention_mask.sum(dim=1).tolist()
+        cache_position = None
+
         if past_key_values is not None:
             past_len = _past_length(past_key_values)
+
             if past_len > 0:
                 past_mask = torch.ones(
                     (attention_mask.shape[0], past_len),
                     dtype=attention_mask.dtype,
                     device=attention_mask.device,
                 )
-                attention_mask = torch.cat([past_mask, attention_mask], dim=-1)
-        outputs = self.model.generate(
+                attention_mask = torch.cat(
+                    [past_mask, attention_mask],
+                    dim=-1,
+                )
+
+                # Modern Transformers requires explicit positions when
+                # generation resumes from a pre-populated external cache.
+                cache_position = torch.arange(
+                    past_len,
+                    past_len + input_ids.shape[-1],
+                    dtype=torch.long,
+                    device=input_ids.device,
+                )
+
+        generation_kwargs = dict(
             input_ids=input_ids,
             attention_mask=attention_mask,
             max_new_tokens=max_new_tokens,
@@ -277,6 +293,11 @@ class ModelWrapper:
             output_scores=False,
             past_key_values=past_key_values,
         )
+
+        if cache_position is not None:
+            generation_kwargs["cache_position"] = cache_position
+
+        outputs = self.model.generate(**generation_kwargs)
         sequences = outputs.sequences
         generations: List[str] = []
         for idx, length in enumerate(prompt_lengths):
