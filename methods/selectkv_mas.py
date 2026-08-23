@@ -430,21 +430,18 @@ class SelectKVMASMethod:
 
     @staticmethod
     def _extract_multiple_choice_answer(text: str):
-        """
-        Extract a final A/B/C/D answer from multiple-choice model output.
-        Returns lowercase a/b/c/d or None.
-        """
+        """Return final multiple-choice answer as a/b/c/d."""
         import re
 
         if not text:
             return None
 
         patterns = [
-            r'\\boxed\\{\\s*([A-Da-d])\\s*\\}',
-            r'(?:final answer|answer|correct option|correct answer)\\s*(?:is|:)?\\s*\\(?([A-Da-d])\\)?',
-            r'\\boption\\s+([A-Da-d])\\b',
-            r'\\(([A-Da-d])\\)\\s*$',
-            r'\\b([A-Da-d])\\s*$',
+            r'\\boxed\{\s*([A-Da-d])\s*\}',
+            r'(?:final answer|answer|correct option|correct answer)\s*(?:is|:)?\s*\(?([A-Da-d])\)?',
+            r'\boption\s+([A-Da-d])\b',
+            r'\(([A-Da-d])\)\s*[.!]?\s*$',
+            r'\b([A-Da-d])\s*[.!]?\s*$',
         ]
 
         for pattern in patterns:
