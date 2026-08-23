@@ -17,6 +17,7 @@ from data import (
 )
 from methods.baseline import BaselineMethod
 from methods.latent_mas import LatentMASMethod
+from methods.selectkv_mas import SelectKVMASMethod
 from methods.text_mas import TextMASMethod
 from models import ModelWrapper
 from utils import auto_device, set_seed
@@ -85,7 +86,7 @@ def main():
     parser = argparse.ArgumentParser()
 
     # core args for experiments
-    parser.add_argument("--method", choices=["baseline", "text_mas", "latent_mas"], required=True,
+    parser.add_argument("--method", choices=["baseline", "text_mas", "latent_mas", "selectkv_mas"], required=True,
                         help="Which multi-agent method to run: 'baseline', 'text_mas', or 'latent_mas'.")
     parser.add_argument("--model_name", type=str, required=True,
                         choices=["Qwen/Qwen3-4B", "Qwen/Qwen3-4B", "Qwen/Qwen3-14B"],
@@ -107,6 +108,26 @@ def main():
     parser.add_argument("--think", action="store_true", help="Manually add think token in the prompt for LatentMAS")
     parser.add_argument("--latent_space_realign", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
+
+    # SelectKV
+    parser.add_argument(
+        "--selectkv_budget_ratio",
+        type=float,
+        default=0.80,
+        help="Fraction of candidate KV positions retained by SelectKV."
+    )
+    parser.add_argument(
+        "--selectkv_recent_tokens",
+        type=int,
+        default=4,
+        help="Number of most recent KV positions protected from pruning."
+    )
+    parser.add_argument(
+        "--selectkv_overlap_pool_fraction",
+        type=float,
+        default=0.50,
+        help="Top-ranked fraction used when finding relevance/persistence overlap."
+    )
 
     # vLLM support
     parser.add_argument("--use_vllm", action="store_true", help="Use vLLM backend for generation")
@@ -157,7 +178,17 @@ def main():
             latent_steps=args.latent_steps,
             judger_max_new_tokens=args.max_new_tokens,
             **common_kwargs,
-            generate_bs=args.generate_bs, 
+            generate_bs=args.generate_bs,
+            args=args,
+        )
+
+    elif args.method == "selectkv_mas":
+        method = SelectKVMASMethod(
+            model,
+            latent_steps=args.latent_steps,
+            judger_max_new_tokens=args.max_new_tokens,
+            **common_kwargs,
+            generate_bs=args.generate_bs,
             args=args,
         )
 

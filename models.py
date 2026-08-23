@@ -82,10 +82,26 @@ class ModelWrapper:
         # fallback: normal transformers path
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
         _ensure_pad_token(self.tokenizer)
+        model_load_kwargs = {
+            "torch_dtype": (
+                torch.bfloat16
+                if torch.cuda.is_available()
+                else torch.float32
+            ),
+        }
+
+        # SelectKV needs explicit attention matrices for
+        # sender-persistence scoring. SDPA does not expose them.
+        if (
+            args is not None
+            and getattr(args, "method", None) == "selectkv_mas"
+        ):
+            model_load_kwargs["attn_implementation"] = "eager"
+
         with torch.no_grad():
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_name,
-                torch_dtype=(torch.bfloat16 if torch.cuda.is_available() else torch.float32),
+                **model_load_kwargs,
             )
         if len(self.tokenizer) != self.model.get_input_embeddings().weight.shape[0]:
             self.model.resize_token_embeddings(len(self.tokenizer))
