@@ -20,11 +20,23 @@ def _ensure_pad_token(tokenizer: AutoTokenizer) -> None:
             tokenizer.add_special_tokens({"pad_token": "<pad>"})
 
 
-def _past_length(past_key_values: Optional[Tuple]) -> int:
-    if not past_key_values:
+def _past_length(past_key_values) -> int:
+    if past_key_values is None:
         return 0
-    k = past_key_values[0][0]
-    return k.shape[-2]
+
+    # Transformers DynamicCache / Cache API
+    if hasattr(past_key_values, "get_seq_length"):
+        try:
+            return int(past_key_values.get_seq_length())
+        except TypeError:
+            return int(past_key_values.get_seq_length(0))
+
+    # Legacy tuple/list cache
+    if isinstance(past_key_values, (tuple, list)) and len(past_key_values) > 0:
+        k = past_key_values[0][0]
+        return int(k.shape[-2])
+
+    return 0
 
 
 class ModelWrapper:
@@ -273,6 +285,8 @@ class ModelWrapper:
         *,
         latent_steps: int,
         past_key_values: Optional[Tuple] = None,
+        return_attentions: bool = False,
+        return_hidden_states: bool = False,
     ) -> Tuple:
         if input_ids.dim() != 2:
             raise ValueError("input_ids must be 2D with shape [batch, seq_len]")
@@ -298,6 +312,7 @@ class ModelWrapper:
             past_key_values=past_key_values,
             use_cache=True,
             output_hidden_states=True,
+            output_attentions=return_attentions,
             return_dict=True,
         )
         past = outputs.past_key_values
@@ -310,10 +325,19 @@ class ModelWrapper:
         latent_vecs_all: List[torch.Tensor] = []
         latent_vecs_all.append(e_t.detach().clone())
 
+        all_steps_attentions = []
+
         for step in range(latent_steps):
 
             source_model = self.HF_model if hasattr(self, "HF_model") else self.model
-            latent_vec = self._apply_latent_realignment(last_hidden, source_model)
+
+            if self.latent_space_realign:
+                latent_vec = self._apply_latent_realignment(
+                    last_hidden,
+                    source_model,
+                )
+            else:
+                latent_vec = last_hidden
 
             latent_vecs_all.append(latent_vec.detach().clone())
 
@@ -334,10 +358,45 @@ class ModelWrapper:
                 past_key_values=past,
                 use_cache=True,
                 output_hidden_states=True,
+                output_attentions=return_attentions,
                 return_dict=True,
             )
+
             past = outputs.past_key_values
             last_hidden = outputs.hidden_states[-1][:, -1, :]
+
+            if return_attentions and outputs.attentions is not None:
+                all_steps_attentions.append(
+                    [
+                        attention.detach()
+                        for attention in outputs.attentions
+                    ]
+                )
+
+        hidden_states_dict = {
+            "input_hidden": e_t,
+            "latent_vectors": latent_vecs_all,
+            "final_hidden": last_hidden,
+        }
+
+        if return_hidden_states and return_attentions:
+            return (
+                past,
+                hidden_states_dict,
+                all_steps_attentions,
+            )
+
+        if return_hidden_states:
+            return (
+                past,
+                hidden_states_dict,
+            )
+
+        if return_attentions:
+            return (
+                past,
+                all_steps_attentions,
+            )
 
         return past
     
