@@ -90,14 +90,11 @@ class ModelWrapper:
             ),
         }
 
-        # SelectKV needs explicit attention matrices for
-        # sender-persistence scoring. SDPA does not expose them.
+        # Use the model's standard attention backend by default.
+        # Eager attention is retained only as an explicit experimental control.
         if (
             args is not None
-            and (
-                getattr(args, "method", None) == "selectkv_mas"
-                or getattr(args, "force_eager_attention", False)
-            )
+            and getattr(args, "force_eager_attention", False)
         ):
             model_load_kwargs["attn_implementation"] = "eager"
 

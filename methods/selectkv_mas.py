@@ -326,6 +326,89 @@ class SelectKVMASMethod:
         return scores.detach().cpu().tolist()
 
     @staticmethod
+    def _compute_kv_novelty(past_kv):
+        """
+        Compute a backend-independent novelty score directly from cached keys.
+
+        Positions whose key representations differ from neighboring cached
+        states receive higher scores. This provides a KV-native redundancy
+        signal without requiring explicit attention matrices.
+        """
+        if past_kv is None:
+            return []
+
+        if Cache is not None and isinstance(past_kv, Cache):
+            legacy = past_kv.to_legacy_cache()
+        else:
+            legacy = past_kv
+
+        key_layers = []
+
+        for layer in legacy:
+            if not isinstance(layer, (tuple, list)) or len(layer) == 0:
+                continue
+
+            key = layer[0]
+
+            if not torch.is_tensor(key) or key.dim() != 4:
+                continue
+
+            # [B, H, S, D] -> [S, D]
+            key_mean = key.detach().float().mean(dim=(0, 1))
+            key_layers.append(key_mean)
+
+        if not key_layers:
+            return []
+
+        min_seq = min(k.shape[-2] for k in key_layers)
+        min_dim = min(k.shape[-1] for k in key_layers)
+
+        keys = torch.stack(
+            [
+                k[:min_seq, :min_dim]
+                for k in key_layers
+            ],
+            dim=0,
+        ).mean(dim=0)
+
+        if min_seq <= 1:
+            return [1.0] * min_seq
+
+        keys = torch.nn.functional.normalize(
+            keys,
+            p=2,
+            dim=-1,
+        )
+
+        # Similarity with previous and next cached positions.
+        adjacent_similarity = torch.sum(
+            keys[:-1] * keys[1:],
+            dim=-1,
+        )
+
+        novelty = torch.zeros(
+            min_seq,
+            dtype=torch.float32,
+            device=keys.device,
+        )
+
+        # Boundary positions have one neighbor.
+        novelty[0] = 1.0 - adjacent_similarity[0]
+        novelty[-1] = 1.0 - adjacent_similarity[-1]
+
+        if min_seq > 2:
+            mean_similarity = 0.5 * (
+                adjacent_similarity[:-1]
+                + adjacent_similarity[1:]
+            )
+            novelty[1:-1] = 1.0 - mean_similarity
+
+        # Cosine similarity can be [-1, 1]. Clamp only for numerical safety.
+        novelty = torch.clamp(novelty, min=0.0, max=2.0)
+
+        return novelty.detach().cpu().tolist()
+
+    @staticmethod
     def _normalized_score_entropy(scores):
         """Return normalized entropy in [0, 1]; higher means more diffuse scores."""
         if scores is None or len(scores) <= 1:
@@ -434,7 +517,6 @@ class SelectKVMASMethod:
         self,
         past_kv,
         receiver_query,
-        step_attentions,
     ):
         """Select and physically trim the inter-agent KV cache."""
 
@@ -452,9 +534,11 @@ class SelectKVMASMethod:
             receiver_query,
         )
 
-        persistence_scores = self._compute_attention_persistence(
-            step_attentions,
-            seq_len,
+        # Backend-independent KV-native persistence/novelty signal.
+        # Higher score means the cached state is less redundant with
+        # neighboring KV states.
+        persistence_scores = self._compute_kv_novelty(
+            past_kv,
         )
 
         n = min(
@@ -648,14 +732,14 @@ class SelectKVMASMethod:
                     active_ids = ids_row[mask_row.bool()].tolist()
                     wrapped_tokens_batch.append(self.model.tokenizer.convert_ids_to_tokens(active_ids))
 
-                # SelectKV requires both sender attention history and
-                # hidden states in addition to the resulting KV cache.
-                past_kv, hidden_states_dict, step_attentions = self.model.generate_latent_batch(
+                # SelectKV now uses only the resulting KV cache and
+                # hidden states. KV-native novelty removes the need for
+                # explicit attention matrices or eager attention.
+                past_kv, hidden_states_dict = self.model.generate_latent_batch(
                     wrapped_ids,
                     attention_mask=wrapped_mask,
                     latent_steps=self.latent_steps,
                     past_key_values=past_kv,
-                    return_attentions=True,
                     return_hidden_states=True,
                 )
 
@@ -669,7 +753,6 @@ class SelectKVMASMethod:
                 past_kv, selectkv_info = self._apply_selectkv(
                     past_kv,
                     receiver_query=receiver_query,
-                    step_attentions=step_attentions,
                 )
 
                 if self.sequential_info_only or self.latent_only:
