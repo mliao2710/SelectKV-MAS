@@ -69,8 +69,18 @@ class SelectKVMASMethod:
             getattr(args, "selectkv_overlap_pool_fraction", 0.50)
         )
 
+        self.selectkv_adaptive = bool(
+            getattr(args, "selectkv_adaptive", False)
+        )
+        self.selectkv_adaptive_min_ratio = float(
+            getattr(args, "selectkv_adaptive_min_ratio", 0.85)
+        )
+
         if not 0.0 < self.selectkv_budget_ratio <= 1.0:
             raise ValueError("selectkv_budget_ratio must be in (0, 1].")
+
+        if not 0.0 < self.selectkv_adaptive_min_ratio <= 1.0:
+            raise ValueError("selectkv_adaptive_min_ratio must be in (0, 1].")
 
         self.selectkv_selector = HybridKVSelector(
             overlap_pool_fraction=self.selectkv_overlap_pool_fraction
@@ -315,6 +325,111 @@ class SelectKVMASMethod:
 
         return scores.detach().cpu().tolist()
 
+    @staticmethod
+    def _normalized_score_entropy(scores):
+        """Return normalized entropy in [0, 1]; higher means more diffuse scores."""
+        if scores is None or len(scores) <= 1:
+            return 1.0
+
+        x = torch.as_tensor(scores, dtype=torch.float32)
+
+        if not torch.isfinite(x).all():
+            return 1.0
+
+        # Standardize before softmax so entropy is comparable across
+        # relevance and persistence despite different raw score scales.
+        std = x.std(unbiased=False)
+
+        if float(std.item()) > 1e-8:
+            x = (x - x.mean()) / std
+        else:
+            return 1.0
+
+        probs = torch.softmax(x, dim=0)
+        entropy = -(probs * torch.log(probs.clamp_min(1e-12))).sum()
+
+        max_entropy = math.log(len(scores))
+        if max_entropy <= 0:
+            return 1.0
+
+        return float((entropy / max_entropy).item())
+
+    @staticmethod
+    def _ranking_agreement(
+        relevance_scores,
+        persistence_scores,
+        pool_fraction=0.20,
+    ):
+        """Top-k overlap between relevance and persistence rankings."""
+        n = min(len(relevance_scores), len(persistence_scores))
+
+        if n <= 0:
+            return 0.0
+
+        k = max(1, int(math.ceil(n * pool_fraction)))
+
+        r_top = set(
+            sorted(
+                range(n),
+                key=lambda i: relevance_scores[i],
+                reverse=True,
+            )[:k]
+        )
+
+        p_top = set(
+            sorted(
+                range(n),
+                key=lambda i: persistence_scores[i],
+                reverse=True,
+            )[:k]
+        )
+
+        return len(r_top & p_top) / float(k)
+
+    def _adaptive_selectkv_ratio(
+        self,
+        relevance_scores,
+        persistence_scores,
+    ):
+        """
+        Choose retention per handoff.
+
+        More concentrated scores + stronger agreement -> more pruning.
+        Diffuse or conflicting signals -> preserve more KV state.
+        """
+        r_entropy = self._normalized_score_entropy(relevance_scores)
+        p_entropy = self._normalized_score_entropy(persistence_scores)
+
+        mean_entropy = 0.5 * (r_entropy + p_entropy)
+
+        agreement = self._ranking_agreement(
+            relevance_scores,
+            persistence_scores,
+            pool_fraction=0.20,
+        )
+
+        min_ratio = self.selectkv_adaptive_min_ratio
+
+        if mean_entropy < 0.82 and agreement >= 0.60:
+            ratio = max(min_ratio, 0.85)
+
+        elif mean_entropy < 0.90 and agreement >= 0.40:
+            ratio = max(min_ratio, 0.90)
+
+        elif mean_entropy < 0.96 and agreement >= 0.20:
+            ratio = max(min_ratio, 0.95)
+
+        else:
+            ratio = 1.00
+
+        return ratio, {
+            "relevance_entropy": r_entropy,
+            "persistence_entropy": p_entropy,
+            "mean_entropy": mean_entropy,
+            "ranking_agreement": agreement,
+            "chosen_retention_ratio": ratio,
+        }
+
     def _apply_selectkv(
         self,
         past_kv,
@@ -358,9 +473,19 @@ class SelectKVMASMethod:
         relevance_scores = relevance_scores[:n]
         persistence_scores = persistence_scores[:n]
 
+        adaptive_info = {}
+
+        if self.selectkv_adaptive:
+            active_ratio, adaptive_info = self._adaptive_selectkv_ratio(
+                relevance_scores,
+                persistence_scores,
+            )
+        else:
+            active_ratio = self.selectkv_budget_ratio
+
         budget = max(
             1,
-            int(math.ceil(n * self.selectkv_budget_ratio)),
+            int(math.ceil(n * active_ratio)),
         )
 
         recent_count = min(
@@ -403,7 +528,21 @@ class SelectKVMASMethod:
             "relevance_only_count": len(result.relevance_only),
             "persistence_only_count": len(result.persistence_only),
             "protected_count": len(result.protected_indices),
+            "adaptive": self.selectkv_adaptive,
+            "target_retention_ratio": active_ratio,
         }
+
+        selectkv_info.update(adaptive_info)
+
+        if self.selectkv_adaptive:
+            print(
+                "[SelectKV-Adaptive] "
+                f"n={n} "
+                f"ratio={active_ratio:.2f} "
+                f"kept={len(result.selected_indices)}/{n} "
+                f"entropy={adaptive_info['mean_entropy']:.3f} "
+                f"agreement={adaptive_info['ranking_agreement']:.3f}"
+            )
 
         return trimmed_kv, selectkv_info
 

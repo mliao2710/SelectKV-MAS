@@ -134,6 +134,17 @@ def main():
         default=0.50,
         help="Top-ranked fraction used when finding relevance/persistence overlap."
     )
+    parser.add_argument(
+        "--selectkv_adaptive",
+        action="store_true",
+        help="Adapt SelectKV retention per handoff using score entropy and ranking agreement."
+    )
+    parser.add_argument(
+        "--selectkv_adaptive_min_ratio",
+        type=float,
+        default=0.85,
+        help="Minimum retention ratio used by adaptive SelectKV."
+    )
 
     # vLLM support
     parser.add_argument("--use_vllm", action="store_true", help="Use vLLM backend for generation")
