@@ -30,6 +30,33 @@ class TextMASMethod:
         self.method_name = "text_mas"
         self.task = args.task
         
+    @staticmethod
+    def _extract_multiple_choice_answer(text: str):
+        """Return final multiple-choice answer as a/b/c/d."""
+        import re
+
+        if not text:
+            return None
+
+        patterns = [
+            r'\\boxed\{\s*([A-Da-d])\s*\}',
+            r'(?:final answer|answer|correct option|correct answer)\s*(?:is|:)?\s*\(?([A-Da-d])\)?',
+            r'\boption\s+([A-Da-d])\b',
+            r'\(([A-Da-d])\)\s*[.!]?\s*$',
+            r'\b([A-Da-d])\s*[.!]?\s*$',
+        ]
+
+        for pattern in patterns:
+            matches = re.findall(
+                pattern,
+                text,
+                flags=re.IGNORECASE | re.MULTILINE,
+            )
+            if matches:
+                return matches[-1].lower()
+
+        return None
+
     def run_batch(self, items: List[Dict]) -> List[Dict]:
         if len(items) > self.generate_bs:
             raise ValueError("Batch size exceeds configured generate_bs")
@@ -39,6 +66,10 @@ class TextMASMethod:
         history_contexts = ["" for _ in range(batch_size)]
         agent_traces: List[List[Dict]] = [[] for _ in range(batch_size)]
         final_texts = ["" for _ in range(batch_size)]
+
+        # Exact TextMAS communication instrumentation.
+        output_tokens_per_item = [0 for _ in range(batch_size)]
+        text_comm_tokens_per_item = [0 for _ in range(batch_size)]
 
         for agent in self.agents:
 
@@ -100,6 +131,13 @@ class TextMASMethod:
 
                 text_out = generated_texts[idx].strip()
 
+                generated_token_count = len(
+                    self.model.tokenizer.encode(
+                        text_out,
+                        add_special_tokens=False,
+                    )
+                )
+
                 if self.args.prompt == "hierarchical":
                     formatted_output = f"[{agent_name_map_for_prompt_hierarchical[agent.name]}]:\n{text_out}\n\n"
                 else:
@@ -107,9 +145,17 @@ class TextMASMethod:
 
                 if agent.role != "judger":
 
+                    # These generated text tokens are explicitly transmitted
+                    # to downstream agents and therefore constitute TextMAS
+                    # inter-agent communication.
+                    text_comm_tokens_per_item[idx] += generated_token_count
+
                     contexts[idx] = f"{contexts[idx]}{formatted_output}"
                     history_contexts[idx] = f"{history_contexts[idx]}{formatted_output}"
                 else:
+                    # Keep final Judger output tokens separate so the existing
+                    # "Output Token" metric remains comparable across methods.
+                    output_tokens_per_item[idx] = generated_token_count
                     final_texts[idx] = text_out
                 mask = attention_mask[idx].bool()
                 trimmed_ids = input_ids[idx][mask].to("cpu").tolist()
@@ -156,6 +202,12 @@ class TextMASMethod:
                     ok = False
                     error_msg = f'Value error in parsing answer. Pred: {pred}, Gold: {gold}'
 
+            elif self.task in ["medqa", "arc_easy", "arc_challenge"]:
+                pred = self._extract_multiple_choice_answer(final_text)
+                gold = str(item.get("gold", "")).strip().lower()
+                ok = (pred == gold) if (pred and gold) else False
+                error_msg = None
+
             else:
                 pred = normalize_answer(extract_gsm8k_answer(final_text))
                 gold = item.get("gold", "")
@@ -172,6 +224,12 @@ class TextMASMethod:
                     "raw_prediction": final_text,
                     "agents": agent_traces[idx],
                     "correct": ok,
+
+                    # Final Judger generation length.
+                    "output_tokens": output_tokens_per_item[idx],
+
+                    # Natural-language tokens actually exchanged among agents.
+                    "text_comm_tokens": text_comm_tokens_per_item[idx],
                 }
             )
         return results

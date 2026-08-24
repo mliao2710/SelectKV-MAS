@@ -274,6 +274,14 @@ def main():
         for p in preds
     )
 
+    # TextMAS-only communication metric. Other methods naturally
+    # return zero because they do not exchange natural-language
+    # messages between agents.
+    text_comm_tokens_total = sum(
+        int(p.get("text_comm_tokens", 0))
+        for p in preds
+    )
+
     kv_positions_handoff_total = sum(
         int(p.get("kv_positions_handoff", 0))
         for p in preds
@@ -324,6 +332,12 @@ def main():
                 "output_tokens_total": output_tokens_total,
                 "output_tokens_per_sample": round(
                     output_tokens_total / n_samples, 4
+                ) if n_samples else 0.0,
+
+                "text_comm_tokens_total":
+                    text_comm_tokens_total,
+                "text_comm_tokens_per_sample": round(
+                    text_comm_tokens_total / n_samples, 4
                 ) if n_samples else 0.0,
 
                 "kv_positions_handoff_total":
