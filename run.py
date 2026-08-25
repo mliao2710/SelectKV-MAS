@@ -140,6 +140,11 @@ def main():
         help="Adapt SelectKV retention per handoff using score entropy and ranking agreement."
     )
     parser.add_argument(
+        "--selectkv_adaptive_aggressive",
+        action="store_true",
+        help="Use a more aggressive boundary-aware adaptive SelectKV policy."
+    )
+    parser.add_argument(
         "--selectkv_adaptive_min_ratio",
         type=float,
         default=0.85,

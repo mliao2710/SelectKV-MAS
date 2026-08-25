@@ -72,6 +72,13 @@ class SelectKVMASMethod:
         self.selectkv_adaptive = bool(
             getattr(args, "selectkv_adaptive", False)
         )
+        self.selectkv_adaptive_aggressive = bool(
+            getattr(args, "selectkv_adaptive_aggressive", False)
+        )
+
+        # Aggressive adaptive implies adaptive mode.
+        if self.selectkv_adaptive_aggressive:
+            self.selectkv_adaptive = True
         self.selectkv_adaptive_min_ratio = float(
             getattr(args, "selectkv_adaptive_min_ratio", 0.85)
         )
@@ -493,17 +500,32 @@ class SelectKVMASMethod:
 
         min_ratio = self.selectkv_adaptive_min_ratio
 
-        if mean_entropy < 0.82 and agreement >= 0.60:
-            ratio = max(min_ratio, 0.85)
+        if self.selectkv_adaptive_aggressive:
+            # More aggressive development policy:
+            # prune when the selectable communication region shows
+            # even moderate concentration/agreement.
+            if mean_entropy < 0.85 and agreement >= 0.20:
+                ratio = max(min_ratio, 0.90)
 
-        elif mean_entropy < 0.90 and agreement >= 0.40:
-            ratio = max(min_ratio, 0.90)
+            elif mean_entropy < 0.93 and agreement >= 0.12:
+                ratio = max(min_ratio, 0.95)
 
-        elif mean_entropy < 0.96 and agreement >= 0.20:
-            ratio = max(min_ratio, 0.95)
+            else:
+                ratio = 1.00
 
         else:
-            ratio = 1.00
+            # Original conservative adaptive policy.
+            if mean_entropy < 0.82 and agreement >= 0.60:
+                ratio = max(min_ratio, 0.85)
+
+            elif mean_entropy < 0.90 and agreement >= 0.40:
+                ratio = max(min_ratio, 0.90)
+
+            elif mean_entropy < 0.96 and agreement >= 0.20:
+                ratio = max(min_ratio, 0.95)
+
+            else:
+                ratio = 1.00
 
         return ratio, {
             "relevance_entropy": r_entropy,
