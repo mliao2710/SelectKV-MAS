@@ -517,21 +517,10 @@ class SelectKVMASMethod:
         self,
         past_kv,
         receiver_query,
-        protected_prefix_len=0,
     ):
-        """Select and physically trim the inter-agent KV cache.
-
-        The cache inherited from previous agents is protected. SelectKV
-        operates on the newly added communication region so that compression
-        does not accidentally destroy previously established reasoning state.
-        """
+        """Select and physically trim the inter-agent KV cache."""
 
         seq_len = _past_length(past_kv)
-
-        protected_prefix_len = max(
-            0,
-            min(int(protected_prefix_len), seq_len),
-        )
 
         if seq_len <= 1:
             return past_kv, {
@@ -578,39 +567,20 @@ class SelectKVMASMethod:
         else:
             active_ratio = self.selectkv_budget_ratio
 
-        # Retention ratio applies only to the newly added communication.
-        # Previously inherited KV state is protected.
-        protected_prefix_len = min(protected_prefix_len, n)
-        selectable_count = max(0, n - protected_prefix_len)
-
-        selectable_budget = (
-            int(math.ceil(selectable_count * active_ratio))
-            if selectable_count > 0
-            else 0
+        budget = max(
+            1,
+            int(math.ceil(n * active_ratio)),
         )
-
-        budget = min(
-            n,
-            protected_prefix_len + selectable_budget,
-        )
-
-        # Protect the inherited cache plus a small recent-token sink.
-        protected_indices = list(range(protected_prefix_len))
 
         recent_count = min(
             self.selectkv_recent_tokens,
-            max(0, n - protected_prefix_len),
+            budget,
+            n,
         )
 
-        if recent_count > 0:
-            protected_indices.extend(
-                range(n - recent_count, n)
-            )
-
-        protected_indices = sorted(set(protected_indices))
-
-        # Budget must always be large enough for all protected positions.
-        budget = max(budget, len(protected_indices))
+        protected_indices = list(
+            range(n - recent_count, n)
+        )
 
         result = self.selectkv_selector.select(
             relevance_scores=relevance_scores,
@@ -783,7 +753,6 @@ class SelectKVMASMethod:
                 past_kv, selectkv_info = self._apply_selectkv(
                     past_kv,
                     receiver_query=receiver_query,
-                    protected_prefix_len=prev_past_len,
                 )
 
                 if self.sequential_info_only or self.latent_only:
