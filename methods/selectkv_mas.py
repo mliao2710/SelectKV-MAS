@@ -568,20 +568,32 @@ class SelectKVMASMethod:
         relevance_scores = relevance_scores[:n]
         persistence_scores = persistence_scores[:n]
 
-        adaptive_info = {}
-
-        if self.selectkv_adaptive:
-            active_ratio, adaptive_info = self._adaptive_selectkv_ratio(
-                relevance_scores,
-                persistence_scores,
-            )
-        else:
-            active_ratio = self.selectkv_budget_ratio
-
-        # Retention ratio applies only to the newly added communication.
-        # Previously inherited KV state is protected.
+        # Retention and adaptive diagnostics operate ONLY on the newly
+        # added communication region. The inherited cache is protected and
+        # should not influence how aggressively new communication is pruned.
         protected_prefix_len = min(protected_prefix_len, n)
         selectable_count = max(0, n - protected_prefix_len)
+
+        adaptive_info = {}
+
+        if self.selectkv_adaptive and selectable_count > 0:
+            selectable_relevance = relevance_scores[
+                protected_prefix_len:n
+            ]
+            selectable_persistence = persistence_scores[
+                protected_prefix_len:n
+            ]
+
+            active_ratio, adaptive_info = self._adaptive_selectkv_ratio(
+                selectable_relevance,
+                selectable_persistence,
+            )
+        else:
+            active_ratio = (
+                self.selectkv_budget_ratio
+                if not self.selectkv_adaptive
+                else 1.0
+            )
 
         selectable_budget = (
             int(math.ceil(selectable_count * active_ratio))
