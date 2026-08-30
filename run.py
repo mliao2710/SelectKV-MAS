@@ -132,7 +132,7 @@ def main():
         "--selectkv_overlap_pool_fraction",
         type=float,
         default=0.50,
-        help="Top-ranked fraction used when finding relevance/persistence overlap."
+        help="Top-ranked fraction used when finding relevance/novelty overlap."
     )
     parser.add_argument(
         "--selectkv_adaptive",
