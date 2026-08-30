@@ -1,297 +1,226 @@
-<a name="readme-top"></a>
+# SelectKV-MAS
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/logo.png">
-    <img alt="LatentMAS" src="assets/logo.png" width=500>
-  </picture>
-</p>
+**Selective KV-cache handoff for efficient latent communication in multi-agent LLM systems.**
 
-<h3 align="center">
-Latent Collaboration in Multi-Agent Systems
-</h3>
+SelectKV-MAS extends [LatentMAS](https://github.com/Gen-Verse/LatentMAS) with **SelectKV**, a training-free mechanism for reducing the KV-cache communication cost of latent multi-agent systems.
 
+Rather than transmitting the complete newly generated KV cache at every agent handoff, SelectKV identifies and retains the most useful KV positions using complementary **relevance** and **KV-native novelty** signals. A boundary-aware design protects previously inherited context while selectively compressing newly communicable KV states.
 
-
-<p align="center">
-    <a href="https://arxiv.org/abs/2511.20639"><img src="https://img.shields.io/badge/arXiv-2511.20639-B31B1B.svg?logo=arxiv" alt="Arxiv"></a>
-    <a href="https://github.com/Gen-Verse/LatentMAS/blob/main/assets/LatentMAS_slides.pdf"><img src="https://img.shields.io/badge/Slides-LatentMAS-FF6F00.svg?logo=googleslides" alt="Paper Slides"></a>
-    <a href="https://huggingface.co/papers/2511.20639"><img src="https://img.shields.io/badge/Huggingface-DailyPaper-FFD21E.svg?logo=huggingface" alt="Huggingface Paper"></a>
-    <a href="https://x.com/Jiaru_Zou/status/1994724438135169196"><img src="https://img.shields.io/badge/Coverage-LatentMAS-2176BC.svg?logo=x" alt="X"></a>
-    <a href="https://github.com/Gen-Verse/LatentMAS/tree/Science-LatentMAS"><img src="https://img.shields.io/badge/Science--LatentMAS-Branch-2D8CFF.svg?logo=github" alt="Science-LatentMAS Branch"></a>
-</p>
+The primary configuration, **SelectKV-90**, retains 90% of newly communicable KV positions and is evaluated against full-cache LatentMAS across six reasoning and code-generation benchmarks.
 
 ---
 
-<p align="center">
-  <img src="assets/main_res.png" width="1000">
-</p>
+## Overview
 
-## 💡 Introduction
+Latent multi-agent systems allow agents to communicate through internal model representations rather than explicit natural-language messages. However, transferring the complete KV cache between agents can introduce substantial communication and memory overhead.
 
+SelectKV addresses this by selectively transmitting KV states at each handoff.
 
-**LatentMAS** is a multi-agent reasoning framework that **moves agent collaboration from token space into the model’s latent space**.  
-Instead of producing long textual reasoning traces, agents communicate by **passing latent thoughts** through their own **working memory**. LatentMAS has the following key features:
+The method has three main components:
 
-- **Efficient** multi-step reasoning with drastically fewer tokens  
-- **Training-free** latent-space alignment for stable generation  
-- **A general technique** compatible with **any HF model** and optionally **vLLM** backends.
+- **Receiver-conditioned relevance** — estimates the importance of cached positions using cosine similarity between cached keys and the current hidden-state query/proxy.
+- **KV-native novelty** — identifies distinctive information using adjacent cached-key cosine dissimilarity.
+- **Boundary-aware selection** — protects KV states inherited from previous agents and applies the retention budget only to newly communicable positions.
 
-Overall, LatentMAS achieves **superior performance**, **lower token usage**, and **major wall-clock speedups** of the multi-agent system.
+The relevance and novelty rankings are combined using an overlap-first hybrid selection procedure.
 
-<p align="center">
-  <img src="assets/main.png" width="1000">
-</p>
+SelectKV requires **no additional training** and operates directly on the KV cache.
 
+---
 
-## 🔔 News
-- **[2026-05-01]** LatentMAS has been accepted into ICML 2026 as a **spotlight** ! 
-- **[2026-02-26]** 🦞 Check out [**OpenClaw-RL**](https://github.com/Gen-Verse/OpenClaw-RL) from our Gen-Verse group! OpenClaw-RL is a fully asynchronous RL framework that trains personalized AI agents directly from natural conversation feedback — no manual labels, no API keys. It introduces two learning paradigms (Binary RL via GRPO and On-Policy Distillation) and runs the entire stack on your own infrastructure. A great complement to LatentMAS's efficient multi-agent reasoning! 
-- **[2025-12-20]** Check [**Science-LatentMAS**](https://github.com/Gen-Verse/LatentMAS/tree/Science-LatentMAS), an excellent extension of LatentMAS developed by Prof. Markus J. Buehler and the [LAMM Lab](https://github.com/lamm-mit) at MIT. Science-LatentMAS is specifically designed for the scientific discovery downstream applications! For more details and instructions, please check our README section "Science-LatentMAS" below and the new `Science-LatentMAS` branch.
-- **[2025-12-15]** Check out these amazing community-driven extensions of LatentMAS!
-  - **[KNN-LatentMAS](https://github.com/Bookmaster9/kNN-latentMAS)** — Enables more efficient KV utilization for latent memory.
-  - **[Hybrid-LatentMAS](https://github.com/nhminle/LatentMAS-Hybrid)** — Extends LatentMAS to support hybrid, heterogeneous multi-agent systems.
+## Repository Structure
 
-- **[2025-11-25]** We have released our paper and code implementations for LatentMAS! Stay tuned for more model-backbone supports and advanced features!
-- **[2025-11-25]** We are featured as 🤗 [**HuggingFace 1st Paper of the Day**](https://huggingface.co/papers/2511.20639)!
+```text
+SelectKV-MAS/
+├── run.py                  # Main experiment entry point and CLI
+├── models.py               # Model wrapper and generation utilities
+├── methods/
+│   ├── baseline.py         # Single-agent baseline
+│   ├── text_mas.py         # Text-based multi-agent communication
+│   ├── latent_mas.py       # Full-cache LatentMAS baseline
+│   └── selectkv_mas.py     # SelectKV implementation
+├── selectkv/               # SelectKV utilities
+├── prompts.py              # Agent prompts
+├── data.py                 # Dataset loading
+├── data/                   # Local benchmark data
+├── requirements.txt        # Python dependencies
+├── REPRODUCIBILITY.md      # Detailed reproduction instructions
+└── README.md
+```
 
+The primary SelectKV implementation is located in:
 
-## 🌐 Awesome Works Built on Top of LatentMAS
+```text
+methods/selectkv_mas.py
+```
 
-Explore community-driven extensions that expand LatentMAS into new domains, architectures, and collaboration patterns:
+---
 
+## Installation
 
-### 🔬 1. **Science-LatentMAS**
-**By Prof. Markus J. Buehler & MIT LAMM Group**  
-- **New Branch:** https://github.com/Gen-Verse/LatentMAS/tree/Science-LatentMAS  
-- **Original Code:** https://github.com/lamm-mit/LatentMAS/tree/flexible_agents  
-**New Features:** Extends LatentMAS for scientific modeling and material-system collaboration, enabling flexible agent types and specialized latent communication for science domains.
+We recommend Python 3.10 and a CUDA-capable GPU with sufficient memory to run Qwen3-4B.
 
+```bash
+git clone <ANONYMOUS_REPOSITORY_URL>
+cd SelectKV-MAS
 
-### 🧠 2. **KNN-LatentMAS**
-**By Bookmaster9**
-- **Blog (Overview):** https://bookmaster9.github.io/kNN-latentMAS/  
-- **Code:** https://github.com/Bookmaster9/kNN-latentMAS  
-- **New Features:** Introduce kNN-based latent retrieval to improve KV-cache usage, boosting memory efficiency and multi-step reasoning stability across agents.
+conda create -n selectkv python=3.10 -y
+conda activate selectkv
 
-### 🤖 3. **Hybrid-LatentMAS**
-**By nhminle**
-- **Code:** https://github.com/nhminle/LatentMAS-Hybrid  
-- **New Features:** Support heterogeneous/hybrid agent collaboration (LLM + non-LLM agents), enabling modular multi-agent pipelines that mix models, tools, and reasoning strategies.
+pip install -r requirements.txt
+```
 
-
-### 🌍 4. **Awareness Network**
-**By Everest-AN**
-- **Website:** https://awareness.market/
-- **Code:** https://github.com/everest-an/Awareness-Market
-- **New Features:** A decentralized AI awareness market product built on LatentMAS research, enabling autonomous agent collaboration and memory sharing.
-
-### 🧩 5. LatentMAS-SLoRA
-**By Arifuzzaman Joy**
-- **Demo:** https://www.youtube.com/watch?v=g7sxYjwgRRk
-- **Code:** https://github.com/Arifuzzamanjoy/latent_mas_slora
-- **New Features:** Augment LatentMAS with role-specialized, dynamically switchable LoRA adapters for better specialization and adaptability.
-
-### 🛰️ 6. AVP (Agent Vector Protocol)
-**By VectorArc**
-- **Blog:** https://blog.avprotocol.ai/avp-binary-protocol-latent-agent-communication/
-- **Code:** https://github.com/VectorArc/avp-python
-- **New Features:** Enables agents to share KV-cache and hidden states instead of text, supporting zero-training latent handoff, cross-model transfer, and faster multi-agent collaboration.
-
-**If your work extends LatentMAS, feel free to open a PR and we’ll feature it here! 🚀**
-
-
-## 📊 Experiments Overview
-
-### ⭐ Main Results  
-Three main tables from our paper spanning 9 tasks across math & science reasoning, commensonse reasoning, and code generation:
-
-- **Table 1 — LatentMAS under the Sequantial MAS setting**  
-  <p align="center"><img src="assets/main_table1.png" width="1000"></p>
-
-- **Table 2 — LatentMAS under the Hierarchical MAS setting**  
-  <p align="center"><img src="assets/main_table2.png" width="1000"></p>
-
-- **Table 3 — Main Results on Reasoning Intensive Tasks**
-  <p align="center"><img src="assets/main_table3.png" width="1000"></p>
-
-
-### ⚡ Superior Efficiency on **Time and Tokens**
-
-Overall, LatentMAS reduces:
-- **~50–80% tokens**
-- **~3×–7× wall-clock time**
-compared to standard Text-MAS or chain-of-thought baselines.
-
-
-## 🛠️ Getting Started
-
-This repository provides all code for reproducing LatentMAS, TextMAS, and baseline single-agent experiments across GSM8K, AIME24/25, GPQA, ARC-Easy/Challenge, MBPP+, HumanEval+, and MedQA.
-
-### ⚙️ Setup Environment Variables
-
-We recommend setting your HF cache directory to avoid repeated downloads:
+Optionally set a Hugging Face cache directory:
 
 ```bash
 export HF_HOME=/path/to/huggingface
 export TRANSFORMERS_CACHE=$HF_HOME
 export HF_DATASETS_CACHE=$HF_HOME
-````
+```
 
-Models and datasets will automatically be downloaded into `$HF_HOME`.
+Models are downloaded automatically through Hugging Face.
 
+---
 
-### 📦 Install Packages
+## Experimental Setup
+
+The primary experiments use:
+
+| Setting | Value |
+|---|---|
+| Model | `Qwen/Qwen3-4B` |
+| Agent topology | Sequential |
+| Latent steps | 10 |
+| Batch size | 1 |
+| Temperature | 0 |
+| Seed | 42 |
+| Samples per benchmark | 100 |
+| SelectKV retention ratio | 0.90 |
+
+We evaluate on six benchmarks:
+
+- ARC-Easy
+- ARC-Challenge
+- GSM8K
+- MedQA
+- MBPP+
+- HumanEval+
+
+---
+
+## Running LatentMAS
+
+The full-cache LatentMAS baseline can be run with:
 
 ```bash
-conda create -n latentmas python=3.10 -y
-conda activate latentmas
-
-pip install -r requirements.txt
+python run.py \
+  --method latent_mas \
+  --model_name Qwen/Qwen3-4B \
+  --task gsm8k \
+  --prompt sequential \
+  --max_samples 100 \
+  --latent_steps 10 \
+  --generate_bs 1 \
+  --temperature 0 \
+  --seed 42
 ```
 
-If you want **vLLM support**, also install:
+---
+
+## Running SelectKV
+
+Run the primary **SelectKV-90** configuration with:
 
 ```bash
-pip install vllm
+python run.py \
+  --method selectkv_mas \
+  --model_name Qwen/Qwen3-4B \
+  --task gsm8k \
+  --prompt sequential \
+  --max_samples 100 \
+  --latent_steps 10 \
+  --generate_bs 1 \
+  --temperature 0 \
+  --seed 42 \
+  --selectkv_budget_ratio 0.90
 ```
 
-## 🚀 Quick Start
+Replace `gsm8k` with the desired task to evaluate another benchmark.
 
-### 1. Clone the repo
+See [`REPRODUCIBILITY.md`](REPRODUCIBILITY.md) for additional experimental details.
 
-```bash
-git clone https://github.com/Gen-Verse/LatentMAS.git
-cd LatentMAS
-```
+---
 
-### 2. Repository Structure
+## Main Results
 
-```
-LatentMAS/
-│── run.py                 # Main entry for experiments
-│── models.py              # Wrapper for HF + vLLM + latent realignment
-│── methods/
-│   ├── baseline.py        # Single-agent baseline
-│   ├── text_mas.py        # Token-space multi-agent method
-│   └── latent_mas.py      # Latent-space multi-agent (our method)
-│── prompts.py             # Prompt constructors
-│── data.py                # Dataset loaders
-│── data/                  # Provided data + figures (We give medqa.json as an example here)
-│── utils.py               # Answer parsing / timeout / helpers
-│── example_logs/          # Example logs from LatentMAS
-│── requirements.txt
-```
+The primary comparison evaluates full-cache **LatentMAS** against boundary-aware **SelectKV-90**.
 
+| Benchmark | LatentMAS Acc. | SelectKV-90 Acc. | LatentMAS KV | SelectKV-90 KV | KV Reduction |
+|---|---:|---:|---:|---:|---:|
+| ARC-Easy | 99% | 99% | 1023.04 | 923.42 | 9.7% |
+| ARC-Challenge | 90% | 90% | 1099.60 | 992.28 | 9.8% |
+| GSM8K | 94% | 93% | 1068.46 | 964.29 | 9.8% |
+| MedQA | 63% | 62% | 2103.52 | 1895.90 | 9.9% |
+| MBPP+ | 72% | 71% | 1545.22 | 1393.25 | 9.8% |
+| HumanEval+ | 89% | 83% | 1589.56 | 1433.45 | 9.8% |
 
-## 🧪 Running Experiments (standard HF backend)
+Across the six benchmarks, SelectKV-90 reduces KV-cache handoff size by approximately **9.7–9.9%**, with an average accuracy change of **−1.5 percentage points** relative to full-cache LatentMAS.
 
-### 🔹 **Baseline (single model)**
+---
 
-```bash
-python run.py --method baseline --model_name Qwen/Qwen3-14B --task gsm8k --max_samples -1 --max_new_tokens 2048
-```
+## Ablations
 
+The repository also supports experiments investigating the components of SelectKV.
 
-### 🔹 **TextMAS (text based multi-agent system)**
+### Boundary-aware handoff
 
-```bash
-python run.py --method text_mas --model_name Qwen/Qwen3-14B --task gsm8k --prompt sequential --max_samples -1 --max_new_tokens 2048
-```
+The boundary-aware mechanism protects the inherited KV prefix from repeated pruning and applies selection only to newly communicable KV states.
 
+On the 100-example MedQA evaluation:
 
-### 🔹 **LatentMAS (our latent mas method)**
+| Method | Accuracy |
+|---|---:|
+| LatentMAS | 63% |
+| SelectKV-90 without boundary protection | 58% |
+| SelectKV-90 with boundary protection | 62% |
 
-```bash
-# 4B example command
-python run.py --method latent_mas --model_name Qwen/Qwen3-4B --task gsm8k --prompt sequential --max_samples -1 --max_new_tokens 2048
+### Matched-budget selection
 
-# 8B example command
-python run.py --method latent_mas --model_name Qwen/Qwen3-8B --task gsm8k --prompt sequential --max_samples -1 --max_new_tokens 2048
+At the same KV communication budget on MedQA:
 
-# 14B example command
-python run.py --method latent_mas --model_name Qwen/Qwen3-14B --task gsm8k --prompt sequential --max_samples -1 --max_new_tokens 2048
-```
+| Selection Method | Accuracy |
+|---|---:|
+| SelectKV | 62% |
+| Random | 56% |
+| Recent-token | 11% |
 
-#### Notes:
+These comparisons isolate the effect of SelectKV's selection strategy from the effect of simply reducing KV-cache size.
 
-* **`--latent_steps`** ∈ [0, 80]
-  Tune for best performance.
-* **`--latent_space_realign`**
-  Enables latent→embedding alignment
-  We treat this as a **hyperparameter** — enable/disable depending on task/model:
+---
 
-```bash
-python run.py --method latent_mas --model_name Qwen/Qwen3-14B --task gsm8k --prompt sequential --max_samples -1 --latent_space_realign --max_new_tokens 2048
-```
+## Reproducibility
 
+Experiments use deterministic decoding (`temperature=0`) with a fixed seed (`42`).
 
-## 📘 Example Logs
+Reported runtime can vary with GPU hardware, CUDA/PyTorch versions, and system load. Accuracy and KV-cache communication statistics provide the primary hardware-independent comparisons.
 
-Two example LatentMAS logs are provided for reference purposes:
+For detailed reproduction instructions, see:
 
-* `example_logs/qwen3_14b_mbppplus_sequential.txt`
-* `example_logs/qwen3_14b_humanevalplus_hierarchical.txt`
+**[`REPRODUCIBILITY.md`](REPRODUCIBILITY.md)**
 
+---
 
-Please refer to additional experiment logs [here](https://drive.google.com/drive/folders/1evGv5YAmLb4YM_D9Yu0ABa1nfqHC5N-l?usp=drive_link).
-You can open them to view the full agent interaction traces and outputs.
+## Acknowledgments
 
+This implementation builds on the open-source **LatentMAS** framework:
 
-## ⚡ vLLM Integration
+> Latent Collaboration in Multi-Agent Systems  
+> Original implementation: [Gen-Verse/LatentMAS](https://github.com/Gen-Verse/LatentMAS)
 
-LatentMAS supports vLLM for faster inference.
+SelectKV extends the latent communication framework with selective, boundary-aware KV-cache handoff.
 
-### 🔹 Baseline with vLLM
+---
 
-```bash
-python run.py --method baseline --model_name Qwen/Qwen3-14B --task gsm8k --max_samples -1 --use_vllm --max_new_tokens 2048
-```
+## License
 
-### 🔹 TextMAS with vLLM
-
-```bash
-python run.py --method text_mas --model_name Qwen/Qwen3-14B --task gsm8k --prompt sequential --max_samples -1 --use_vllm --max_new_tokens 2048
-```
-
-### 🔹 LatentMAS with vLLM
-
-LatentMAS supports a **hybrid HF + vLLM pipeline** for fast inference:
-- vLLM handles **final text generation** (with prefix caching, tensor parallelism, etc.)
-- A HuggingFace model handles **latent-space rollout** and hidden-state alignment
-
-For this setup, we recommend using two GPUs:
-- One GPU for vLLM (`--device`, e.g., `cuda:0`)
-- One GPU for the auxiliary HF model (`--device2`, e.g., `cuda:1`)
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1 python run.py --method latent_mas --model_name Qwen/Qwen3-14B --task gsm8k --prompt sequential --max_samples -1 --max_new_tokens 2048 \
-  --use_vllm \
-  --use_second_HF_model \
-  --enable_prefix_caching \
-  --device2 cuda:1
-```
-
-**📍Important Note:**
-
-> vLLM does **not** officially support modifying KV-cache or prompting via latent embeddings.
-> We modify the partial inner package inside vLLM backend for our method implementation.
-> Note minor numeric differences may arise compared to offical HF backend due to different decoding (generation) strategies. Please Use the HF backend to reproduce the official published results.
-
-## 📚 Citation
-
-💫 If you find **LatentMAS** helpful, please kindly give us a star ⭐️ and cite below. Thanks!
-
-```
-@inproceedings{
-zou2025latentmas,
-  title={Latent Collaboration in Multi-Agent Systems},
-  author={Jiaru Zou and Ruizhong Qiu and Gaotang Li and Xiyuan Yang and Katherine Tieu and Pan Lu and Ke Shen and Hanghang Tong and Yejin Choi and Jingrui He and James Zou and Mengdi Wang and Ling Yang},
-  booktitle={Forty-third International Conference on Machine Learning},
-  year={2026}
-}
-```
-
-## 🤝 Ackowledgement 
-
-This code is partially based on the amazing work of [vLLM](https://github.com/vllm-project/vllm).
+This repository follows the licensing terms of the underlying LatentMAS codebase. See [`LICENSE`](LICENSE) for details.
