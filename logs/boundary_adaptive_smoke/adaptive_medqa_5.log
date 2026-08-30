@@ -1,10 +1,0 @@
-`torch_dtype` is deprecated! Use `dtype` instead!
-2026-08-25 03:57:40.241327: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:467] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
-WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
-E0000 00:00:1787630260.249627    3826 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
-E0000 00:00:1787630260.252432    3826 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
-W0000 00:00:1787630260.260142    3826 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
-W0000 00:00:1787630260.260156    3826 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
-W0000 00:00:1787630260.260160    3826 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
-W0000 00:00:1787630260.260164    3826 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
-Loading checkpoint shards:   0%|          | 0/3 [00:00<?, ?it/s]Loading checkpoint shards:  33%|███▎      | 1/3 [00:10<00:21, 10.94s/it]Loading checkpoint shards:  67%|██████▋   | 2/3 [00:14<00:06,  6.75s/it]Loading checkpoint shards: 100%|██████████| 3/3 [00:15<00:00,  3.83s/it]Loading checkpoint shards: 100%|██████████| 3/3 [00:15<00:00,  5.03s/it]
